@@ -202,6 +202,72 @@ game's, unless a compatibility test says otherwise.
 Status: this closes one open question in `DESIGN.md` §9 and one risk in §5, before any
 netcode was written.
 
+### P3. No single-instance mutex — two clients CAN run on one PC — CONFIRMED by running it
+
+Static lead: `Rodina.exe` imports **no mutex APIs at all** (`CreateMutexA/W`,
+`CreateMutexExA/W`, `OpenMutexA/W` all absent). Its only named kernel object is
+`Local\{C15730E2-145C-4c5e-B005-3BC753F42475}-once-flag`, a one-time-init flag, not an
+instance lock. (`probe/check_mutex.py`)
+
+Confirmed empirically, because static evidence is only a lead: launched two copies of
+`Rodina.exe` from the same folder (the test copy) and both stayed alive and reached
+`BEGIN GAME`. PID 25488 held ~572 MB, PID 22784 ~22 MB; neither exited, neither reported
+an already-running error. Both wrote to the same `RodinaLog.txt`.
+
+**Derived:** the two-local-client test rig is viable without mutex patching, which
+removes the Nucleus-style workaround from the critical path. Caveat: both instances
+shared one `UserData\` directory and one `RodinaLog.txt`, so for clean automated tests
+each instance needs its own copy of the whole install (or a redirected user dir) to
+avoid save/log collisions. Also note the second instance was still light (22 MB) at the
+moment of measurement — it had loaded scripts and started the game, but confirm it
+renders and simulates before calling it a usable second client.
+
+### P4. Mod loading is gated, and the game logs exactly why
+
+On startup the log says:
+
+```
+InitMods: Mods not loaded - registration is not valid
+```
+
+Even though `Mods\LoadOrder.lua` exists and is valid Lua (`ModList = { }`). The exe
+contains the neighbouring strings `InitMods: Mods\LoadOrder.lua loaded.`,
+`InitMods: Registering Mod (`, `InitMods: Mods\LoadOrder.lua finished loading. Item
+count: ` and `EGLoadLuaDataFile` / `EGSaveLuaDataFile`, so the loader exists but the
+current file is rejected as "not valid".
+
+Likely causes, to test one at a time (in order of cheapest):
+
+1. An empty `ModList` is treated as invalid (needs at least one entry with a `Path`).
+2. The expected schema has more keys than `ModList` (the exe mentions "Valid path count").
+3. Registration is tied to a flag or command line.
+
+This is the first thing the Stage-1 probe must solve: **`InitMods: Registering Mod (`
+has to appear in the log** before anything else is worth doing.
+
+### P5. Confirmed script pipeline and the actor API shape
+
+From a normal launch log (`local/rodina-test/RodinaLog.txt`):
+
+- `Generation Compile EGSL: Scripts\*.rsl` → `Generation Compile EGSL Complete`
+  (EGSL compiles at runtime on the generation side after all).
+- `Loading Script: Scripts\Gameplay\EGActor.lua`, `EGPlayer.lua`, `EGPlayerInfo.lua`, …
+  — the whole 105-script gameplay tree loads by name.
+- `Start Game` → `Current Scene: 2059` → **`Player Camera Actor: EGPlayer`** and
+  **`Player Controlled Actor: EGPlayer`**.
+
+The last two lines are the most useful thing found so far: the engine logs the entity it
+treats as the camera and the entity the player controls, which tells the probe exactly
+where the local player lives (`EGPlayer`), and implies the engine has the notion of
+"controlled actor" that a puppet would need to be excluded from.
+
+### P6. Test copy prepared
+
+`local\rodina-test\` — full copy, 263 MB, `Rodina.exe` hash matches the install
+(`D8E8EBEA…5ED397`). Pristine backups kept: `Mods\LoadOrder.lua.orig`,
+`RodinaLog.txt.orig`. `local/` is gitignored, so none of this can be committed.
+The owner's real install was never written to.
+
 ## Next actions (proposed, all need owner consent per ground rule 1)
 
 1. Install git + gh (owner already approved) → fork, branch `game/rodina`, keep notes.

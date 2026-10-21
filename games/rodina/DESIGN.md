@@ -86,6 +86,10 @@ Questions the probe must answer, each with an observed yes/no and a log line as 
 
 1. **Does a mod load at all?** Add a mod through `Mods\LoadOrder.lua`, confirm the exe's
    `InitMods: Registering Mod (` log line, and confirm a print from mod code appears.
+   **Known obstruction to solve first:** the current `Mods\LoadOrder.lua` is rejected with
+   `InitMods: Mods not loaded - registration is not valid` (NOTES.md P4). The loader
+   exists; the file's content or schema is wrong. Nothing else matters until
+   `InitMods: Registering Mod (` appears.
 2. **What is the user-script hook really called?** The exe references
    `EG_DIR_SCRIPTS + "\UserScript.lua"`; the file does not exist in this install. The
    1.2.4 notes call it `UserScript.lua`. Determine whether the name is case- or
@@ -155,8 +159,11 @@ Test transport: a `--transport udp|steam` switch, so two clients on one PC test 
 localhost UDP (with built-in lag/loss simulation, or the repo's `tools/chaos` relay)
 while the real path uses Steam. The same code then serves the automated tests.
 
-Two clients on one PC: see the mutex notes in the playbook; a single-instance mutex may
-need neutralising, and `tools/gamepool`/`gameslot` exist for exactly this.
+Two clients on one PC: **confirmed possible without any mutex patching** — Rodina imports
+no mutex APIs, and two copies launched from the same folder both reached `BEGIN GAME`
+(NOTES.md P3). They do share one `UserData\` and one `RodinaLog.txt`, so automated tests
+need per-instance installs (or a redirected user dir) to keep saves and logs separate.
+`tools/gamepool`/`gameslot` exist for running several copies safely.
 
 ## 6. Story and world state
 
@@ -219,7 +226,10 @@ but it does not remove the risk. Milestones in order of realistic deliverability
 
 - ~~Does `steam_api.dll` in the install export the flat API?~~ **Answered: no.** See
   NOTES.md P2 — the pinned 32-bit Steamworks.NET DLL must be shipped beside our helper.
-- Is there a second-instance mutex? (determines whether two clients fit on one PC)
+- ~~Is there a second-instance mutex?~~ **Answered: no.** Two copies ran at once from the
+  same folder (NOTES.md P3). Per-instance `UserData` still needed for clean tests.
+- What is the correct schema for `Mods\LoadOrder.lua`? (blocks the entire probe; the exe
+  rejects our file as "registration is not valid" — NOTES.md P4)
 - How much of the entity graph does Lua actually expose? (§4 decides the project)
 - Can the engine be made to run two "player" entities, or does the player object assume
   singularity the way Bethesda's hero does?
