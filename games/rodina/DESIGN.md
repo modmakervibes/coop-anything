@@ -84,12 +84,14 @@ out whether the Lua layer is a sufficient hook point.
 
 Questions the probe must answer, each with an observed yes/no and a log line as evidence:
 
-1. **Does a mod load at all?** Add a mod through `Mods\LoadOrder.lua`, confirm the exe's
-   `InitMods: Registering Mod (` log line, and confirm a print from mod code appears.
-   **Known obstruction to solve first:** the current `Mods\LoadOrder.lua` is rejected with
-   `InitMods: Mods not loaded - registration is not valid` (NOTES.md P4). The loader
-   exists; the file's content or schema is wrong. Nothing else matters until
-   `InitMods: Registering Mod (` appears.
+1. **Does a mod load at all?** ~~Known obstruction~~ **Solved and confirmed yes
+   (2026-10-20).** The gate was the exe, not the schema: `Rodina.exe` (Standalone) can
+   never register; `Rodina_Steam.exe` (+ `steam_appid.txt` 314230, Steam client running)
+   registers as Tier Buffet and loads mods. Schema: `ModList = { "Mods\\<dir>", … }` —
+   an array of directory path strings; mod files mirror the game root tree and load
+   **after** the base scripts (`Loading Mod Script:` log line). Marker executed:
+   `Loading Mod Script: mods\coopprobe\Scripts\Gameplay\EGMenuRegister.lua` →
+   `[CoopProbe] mod file executed`. Full evidence: NOTES.md P4/P7.
 2. **What is the user-script hook really called?** The exe references
    `EG_DIR_SCRIPTS + "\UserScript.lua"`; the file does not exist in this install. The
    1.2.4 notes call it `UserScript.lua`. Determine whether the name is case- or
@@ -228,8 +230,9 @@ but it does not remove the risk. Milestones in order of realistic deliverability
   NOTES.md P2 — the pinned 32-bit Steamworks.NET DLL must be shipped beside our helper.
 - ~~Is there a second-instance mutex?~~ **Answered: no.** Two copies ran at once from the
   same folder (NOTES.md P3). Per-instance `UserData` still needed for clean tests.
-- What is the correct schema for `Mods\LoadOrder.lua`? (blocks the entire probe; the exe
-  rejects our file as "registration is not valid" — NOTES.md P4)
+- ~~What is the correct schema for `Mods\LoadOrder.lua`?~~ **Answered.** Array of mod
+  directory path strings; mods must run as `Rodina_Steam.exe` (NOTES.md P4/P7). The
+  "registration is not valid" gate was the standalone exe, not the file.
 - How much of the entity graph does Lua actually expose? (§4 decides the project)
 - Can the engine be made to run two "player" entities, or does the player object assume
   singularity the way Bethesda's hero does?

@@ -222,28 +222,63 @@ avoid save/log collisions. Also note the second instance was still light (22 MB)
 moment of measurement — it had loaded scripts and started the game, but confirm it
 renders and simulates before calling it a usable second client.
 
-### P4. Mod loading is gated, and the game logs exactly why
+### P4. Mod-loading gate — RESOLVED 2026-10-20 (second session)
 
-On startup the log says:
+**Resolved. The gate was never the LoadOrder schema — it was the exe.** Every log that
+showed `InitMods: Mods not loaded - registration is not valid` was a run of **`Rodina.exe`
+("Game Variant: Standalone Version")**, the pre-Steam keyed build. Every log that showed
+`Registration State: OK` / `Registration Tier: Buffet` / `InitMods: Mods\LoadOrder.lua
+loaded.` was a run of **`Rodina_Steam.exe` ("Game Variant: Steam Full Version")**, which
+derives registration from Steam ownership. The first session only ever ran `Rodina.exe`
+directly, so its schema experiments were all tested against a build that can never
+register. Observation: the two exes differ only in this (same version id 1060500).
 
-```
-InitMods: Mods not loaded - registration is not valid
-```
+To run `Rodina_Steam.exe` from the test folder **directly** (not via Steam's
+"Play" button): create `steam_appid.txt` containing `314230` next to the exe, with the
+Steam client running. Without it the exe exits with code 1 after writing exactly three
+log lines (`BEGIN LOG`, `VERSION ID`). With it: `Game Variant: Steam Full Version`,
+`Steam user ID: 76561197995789990`, registration OK.
 
-Even though `Mods\LoadOrder.lua` exists and is valid Lua (`ModList = { }`). The exe
-contains the neighbouring strings `InitMods: Mods\LoadOrder.lua loaded.`,
-`InitMods: Registering Mod (`, `InitMods: Mods\LoadOrder.lua finished loading. Item
-count: ` and `EGLoadLuaDataFile` / `EGSaveLuaDataFile`, so the loader exists but the
-current file is rejected as "not valid".
+### P7. The mod system's actual semantics (all observed on 1.6.5, Steam exe)
 
-Likely causes, to test one at a time (in order of cheapest):
+1. **Schema** — `Mods\LoadOrder.lua` defines `ModList` as a **flat array of directory
+   path strings**. Not tables, not name→path maps:
+   ```lua
+   ModList =
+   {
+       "Mods\\CoopProbe",
+   }
+   ```
+   A keyed table (`CoopProbe = { Paths = {...} }`) yields `Item count: 0`. Array of
+   strings yields `Item count: N`.
+2. **Entry validation** — only entries that are **existing directories** are registered.
+   A direct `.lua` file entry and a nonexistent path were both silently skipped (2 of 4
+   entries registered). The log line is `InitMods: Registering Mod (N): mods\<lowercased>\`
+   (lowercased, trailing backslash appended — cosmetic; the FS is case-insensitive).
+3. **Mirror-tree layout** — a mod folder mirrors the game's root tree. The exe exports
+   `GetFilesInDirectoryIncludingMods` and knows the roots `Data\`, `Models\`,
+   `Interiors\`, `UserData\`, `Scripts\`, `Mods\`. Working layout:
+   `Mods\CoopProbe\Scripts\Gameplay\EGMenuRegister.lua`.
+4. **Load order = override mechanism** — the log distinguishes
+   `Loading Script: Scripts\Gameplay\EGMenuRegister.lua` (base, ~5 s) from
+   `Loading Mod Script: mods\coopprobe\Scripts\Gameplay\EGMenuRegister.lua` (~12 s,
+   after the whole base tree). Mods load **after** and therefore win — this is the
+   "surgical modding" the 1.2.1 changelog describes. DESIGN.md §4 Q1 answered: **yes, a
+   mod loads and its code runs.**
+5. **`Valid path count:` in the summary** — semantics still unknown (labelled unknown):
+   it stayed 0 while mods were registered but had no files, and became 2 when the first
+   mod file existed (2 mods, 1 file → 2, so it is not a file count). It does **not**
+   gate registration — `Registering Mod (` appeared even at 0. Do not chase this until
+   something real depends on it.
+6. **`print` is not available in mod scripts** (or at init time): a marker using
+   `print(...)` never appeared and the run reported `Valid path count: 0`. The same file
+   with `System.Log("...")` logged fine and validated. `System.Log` is the channel the
+   shipped scripts use (`EGActionBindings.lua:371`).
 
-1. An empty `ModList` is treated as invalid (needs at least one entry with a `Path`).
-2. The expected schema has more keys than `ModList` (the exe mentions "Valid path count").
-3. Registration is tied to a flag or command line.
-
-This is the first thing the Stage-1 probe must solve: **`InitMods: Registering Mod (`
-has to appear in the log** before anything else is worth doing.
+Test state left behind (all in gitignored `local/rodina-test\`): `steam_appid.txt`,
+`Mods\LoadOrder.lua` (candidate D, two dirs), `Mods\CoopProbe\Scripts\Gameplay\
+EGMenuRegister.lua` (marker only), `Mods\CoopEmpty\` (empty control), backups
+`LoadOrder.lua.orig` (pristine) and `LoadOrder.lua.candidateB.bak`.
 
 ### P5. Confirmed script pipeline and the actor API shape
 
