@@ -1,9 +1,9 @@
 # Rodina — co-op session notes
 
 Session date: 2026-10-20
-Agent: OpenCode agent on the owner's PC (Windows). Repo downloaded as a zip (git not
-installed yet). Game path below was read **read-only**; nothing was modified or copied
-yet.
+Agent: OpenCode agent on the owner's PC (Windows). Repo cloned with git (installed this
+session); working on branch `game/rodina`. Game install was read **read-only**; nothing
+in it was modified. All owner-private state is kept in `local/`.
 
 ## Phase 0 — Triage: answers
 
@@ -13,7 +13,7 @@ yet.
 |---|---|---|
 | Title | Rodina | Steam app 314230 |
 | Developer / publisher | Elliptic Games (Brendan Anthony) | store page |
-| Store | **Steam** (owner's copy; appmanifest_314230.acf present) | `F:\SteamLibrary\steamapps\steamapps`? → `F:\SteamLibrary\steamapps\appmanifest_314230.acf` |
+| Store | **Steam** (owner's copy; appmanifest_314230.acf present) | `appmanifest_314230.acf` in the Steam library |
 | Version | **1.6.5** ("Player Stats and Power Systems + Atmospheric Lighting Patch") | `README.txt` in install |
 | Steam buildid | 10958618 | appmanifest_314230.acf |
 | Steam depots | 314231, 314232 | appmanifest |
@@ -148,6 +148,59 @@ Exe version resource is empty (no FileVersion/ProductName) — identify by hash 
 - How interiors/savegames/EGON serialise actors (needed for host→client world state).
 - Whether the owner's friends all own Rodina on Steam (needed for Steam relay matchmaking).
 - Tooling: none installed yet (git, Python, Ghidra, VS/MSVC all unconfirmed).
+
+## Probe results (ran 2026-10-20, read-only)
+
+### P1. Architecture: Rodina is 32-bit
+
+Measured from PE headers (`probe/pe_exports.py`, no toolchain needed):
+
+| File | PE machine |
+|---|---|
+| `Rodina.exe` | x86 (32-bit), 0x014C |
+| `steam_api.dll` | x86 (32-bit) |
+| `d3dcompiler_47.dll` | x86 (32-bit) |
+
+Consequence: every DLL we build or load must be **32-bit** (MSVC/mingw `-m32`), and any
+`ctypes` probing needs 32-bit Python. This machine has only 64-bit Python 3.13
+(`ctypes.WinDLL` on the game's DLL fails with "not a valid Win32 application"), so
+`probe/check_steam_flat.py` detects that case and explains it instead of erroring out.
+
+### P2. The game's own `steam_api.dll` cannot drive the Spacewar relay — CONFIRMED
+
+This is the check `networking-steam-spacewar.md` explicitly warns about (it cites the
+Fallout New Vegas copy failing for this exact reason). Read the export table directly
+(`probe/pe_exports.py`; 859 exports) rather than guessing:
+
+| Symbol | Present |
+|---|---|
+| `SteamAPI_Init` | YES |
+| `SteamAPI_GetHSteamPipe` | YES |
+| `SteamAPI_ISteamMatchmaking_CreateLobby` | YES |
+| `SteamAPI_ISteamMatchmaking_JoinLobby` | YES |
+| `SteamAPI_InitFlat` | **NO** |
+| `SteamAPI_ManualDispatch_*` | **NO** |
+| `SteamAPI_SteamUser_v023` | **NO** |
+| `SteamAPI_SteamMatchmaking_v009` | **NO** |
+| `SteamAPI_SteamFriends_v018` | **NO** |
+| `SteamAPI_SteamNetworkingMessages_SteamAPI_v002` | **NO** |
+| `SteamAPI_SteamNetworkingUtils_SteamAPI_v004` | **NO** |
+
+There are **zero** `SteamAPI_Steam<interface>_vNNN` versioned getters in the whole export
+table, so the flat API is not merely a different vintage — it is absent. The DLL is an
+old-style (non-flat, C++ interface) build.
+
+**Derived:** the relay must ship the **pinned Steamworks.NET standalone 32-bit
+`steam_api.dll`** (`Windows-x86`, release 2025.164.1, SHA-256
+`fdafb7c65ec7d4182b42bf92cc8671c68e4dc547cc6e613899d2618a47eb65da`) next to our helper,
+per the playbook. We must **not** try to load the game's copy, and we cannot use the
+game's existing Steam session through its DLL. Also note both copies cannot simply be
+swapped blindly: the game loads its own `steam_api.dll` for Steam features (Cloud saves,
+update check), so the relay DLL has to live beside our own helper/loader, not replace the
+game's, unless a compatibility test says otherwise.
+
+Status: this closes one open question in `DESIGN.md` §9 and one risk in §5, before any
+netcode was written.
 
 ## Next actions (proposed, all need owner consent per ground rule 1)
 
