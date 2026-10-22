@@ -108,10 +108,14 @@ Questions the probe must answer, each with an observed yes/no and a log line as 
    `puppet.Position = player.Position:Plus(EGVector(2,0,0))` every frame: 2,400+ frames
    (~40 s) live, no crash, exact readback, the per-frame write wins over physics.
    Rotation not yet working: `Engine:SetRotationVelocity` produced no measurable change in
-   `GetYawPitchRollToLevel`; a direct orientation setter is still to be found. **Render
-   visibility not yet verified** (screenshots captured, need owner check). The puppet
-   follows a moving player: teleporting the player from Lua carried the puppet exactly.
-   Permanent culling/AI control over longer play also `unknown`. NOTES.md P8.
+   `GetYawPitchRollToLevel`; a direct orientation setter is still to be found. **Render:
+   no for a bare `EGPlayer`; yes for native character classes** (owner-confirmed
+   2026-10-22). The puppet was never visible in six live screenshots, while
+   `EGRobotCharacter`/`EGXenoCharacter` spawned with the game's own recipes were visible.
+   So the remote avatar must be an engine character class (or a clone), not a bare
+   `EGPlayer` — the logical actor has no body. The puppet follows a moving player:
+   teleporting the player from Lua carried the puppet exactly. Permanent culling/AI
+   control over longer play also `unknown`. NOTES.md P8.4, P8.10.
 5. **Can Lua enumerate nearby actors** — Xeno, ships — with enough state to mirror them
    (id, position, health, alive/dead)? **Yes (2026-10-22).**
    `System.GetCurrentScene():GetActors()` returns an array; each entry exposes
@@ -145,7 +149,9 @@ reverted backup is made first.
 **Decision rule, written before the result so it cannot be rationalised afterwards:**
 
 - **Lua can create and drive a second actor** → proceed to Stage 2. This is the good
-  outcome and makes the whole thing tractable.
+  outcome and makes the whole thing tractable. **This is what happened** (item 4), with
+  one qualifier: the actor is invisible as a bare `EGPlayer`; a renderable remote avatar
+  must be a native character class or a clone of one (item 4, NOTES.md P8.10).
 - **Lua can read but not create** → proceed, but the puppet has to come from cloning an
   existing actor class. Narrower, still viable; document the trick.
 - **Lua can do neither** → **stop and report.** A native Lua-binding DLL

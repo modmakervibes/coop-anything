@@ -403,12 +403,26 @@ invalidate several intermediate conclusions, corrected below.
    - One short `System.Log` line per frame ran for hundreds of frames without issue;
      sparse logging (every 20–120 frames) remains the safest for long runs.
 
+10. **Render: a bare `EGPlayer` puppet is invisible; native character classes render**
+    (2026-10-22, **owner-confirmed**). The item-4 puppet stayed in `GetActors()`, followed
+    the player for the whole run and was driven for 2,400+ frames, but the owner could not
+    see it in any of six live screenshots taken while orbiting the spawn point
+    (`local\rodina-test\shots\shot_08..12`). A follow-up run then spawned
+    `EGRobotCharacter` and `EGXenoCharacter` with the game's own recipes
+    (`Scripts\Gameplay\EGGame.lua:686-734`) at the same place; the owner confirmed **at
+    least one is visible** (`local\rodina-test\shots\npc_6.png`, `npc_8.png`).
+    **Observation** (owner's eyes in the running game), not a pixel measurement.
+    **Derived:** `EGPlayer:New()` makes a logical actor with no body; visibility comes from
+    the native class's engine-side mesh, which Lua never touches. The remote avatar must be
+    an engine-recognised character class (or a clone of one), not a bare `EGPlayer`.
+    **Unknown:** which of the two (robot or xeno) was visible and whether both were;
+    whether a native NPC can be given the player's appearance (mesh swap/attach); whether
+    its animation state can be driven from Lua.
+
 Unknowns left by this pass:
 
-- **Does the puppet render?** Two screenshots were captured while it was alive
-  (`local\rodina-test\puppet_probe_25s.png`, `…_33s.png`), but this agent cannot view
-  images. Owner check needed. No Lua model field exists on `EGCharacterActor` (mesh is
-  engine-side), so it is plausible but **not verified**.
+- ~~Does the puppet render?~~ **Answered: no for a bare `EGPlayer`, yes for native
+  character classes** — see item 10.
 - Puppet side effects: `EGPlayer:Update` runs `UpdateDepthofFieldBlur`, which calls
   `System.SetTimeScale` and scene blur. Not measured; a real puppet should subclass
   `EGPlayer` with `Update`/`UpdateDepthofFieldBlur` stubbed.
@@ -422,9 +436,9 @@ Unknowns left by this pass:
 Probe state in `local\rodina-test\`: `steam_appid.txt`; `Mods\LoadOrder.lua` (rewritten
 by the game, two entries); `Mods\CoopEmpty\` (control);
 `Mods\CoopProbe\Scripts\Gameplay\GameplayMain.lua` (menu bypass + puppet drive + full
-actor-id enumeration, last run); `Scripts\UserScript.lua` (inert test file); two
-screenshots. Probe snippets kept beside the install as `_probe_*.lua`, logs as
-`RodinaLog*.txt`. All gitignored.
+actor-id enumeration, last run); `Scripts\UserScript.lua` (inert test file); screenshots
+in `shots\` (puppet orbit run, native-NPC run). Probe snippets kept beside the install as
+`_probe_*.lua`, logs as `RodinaLog*.txt`. All gitignored.
 
 ## Next actions (proposed, all need owner consent per ground rule 1)
 
