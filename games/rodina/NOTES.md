@@ -470,6 +470,41 @@ invalidate several intermediate conclusions, corrected below.
       (in front of the remote player) still needs to be derived.
     - No movement animation is driven; only the root position/rotation.
 
+12. **Camera/world geometry, and a negative ground-level placement test** (2026-10-22, numeric
+    + owner-confirmed negative).
+    **Observations:**
+    - `player.Position` and `player.Engine:EditorGetPosition()` are the same value and are
+      **world/planet space** (`-470.79, 2159.24, -12005.79`); the player's parent is
+      `EGStartingPlanet` ("AsteroidLarge-50").
+    - `EditorGetPosition()` on a **child** entity is **parent-local**: the player's camera
+      reads `0,0,1.649`, i.e. eye height above the player.
+    - Camera-local **+Y is forward**. `GetScreenPosForLocalDir(+Y)` maps to the screen
+      centre `(0,0,0.495)`; `+X/-X/+Z/-Z` map to infinities (perpendicular to the view
+      axis). The HUD reticle code also treats `dir.y > 0` as "in front"
+      (`EGMenuHUD.lua:456`).
+    - Camera-local **+Z points down** (world direction ≈ `-Z`): the camera basis is rolled
+      180° relative to the actor convention where +Z is up.
+    - `EGVector(x,y)` is **not a valid constructor** (needs 1 or 3 components); this is why
+      the first `GetLocalDirForScreenPos` call failed.
+    - `GetScreenBox(entity)` exposed no `x/y/w/h` fields through Lua (`?` for every field)
+      and is not a usable visibility oracle.
+    - `cam:GetLocalVectorTo(entity)` + `GetScreenPosForLocalDir` did not track a 4-unit
+      offset either (stuck at `-0.26,-1.27,0.49` across six avatar positions), so there is
+      **no working numeric visibility oracle yet**.
+    - **Negative placement result:** a visible xeno avatar placed 4 units along the
+      horizontal camera forward at the player's Z (`player.Position + fwd*4`) was **not
+      visible** (owner, `shots/front_montage.png`), even though the numeric placement and
+      facing were exact. The view direction also starts changing on its own after ~7 s
+      (no input), so the player is not perfectly static.
+
+    **Derived / guess:** the ground-level point 4 m ahead is most likely inside a slope or
+    hill at the spawn (`+5Z` clears the terrain, which is why the proof avatar showed).
+    **Derived:** camera-relative placement is only a convenience for single-client probes;
+    in the real mod the avatar is placed at the **remote player's transmitted position**,
+    which is already on walkable ground. Do not build terrain-aware spawning for the probe.
+    **Unknown:** whether the negative was occlusion, framing, or something else; why the
+    view direction drifts without input.
+
 Unknowns left by this pass:
 
 - ~~Does the puppet render?~~ **Answered: no for a bare `EGPlayer`, yes for a native
