@@ -303,6 +303,62 @@ where the local player lives (`EGPlayer`), and implies the engine has the notion
 `RodinaLog.txt.orig`. `local/` is gitignored, so none of this can be committed.
 The owner's real install was never written to.
 
+### P8. Stage-1 probe, second pass (2026-10-22): hook, UserScript, player state, puppet
+
+All observed in `local\rodina-test\` with the P4 launch recipe; each run is one
+`Rodina_Steam.exe` start, killed after the stated time.
+
+1. **`Scripts\UserScript.lua` does not run** in 1.6.5 Steam. Two attempts: the file set a
+   global and called `System.Log`. No log line at startup, and at `Start Game` the mod's
+   probe read the global as `nil`. The exe still contains `\UserScript.lua` (appended to
+   the scripts dir), so the string is there but the hook is not active in this build.
+   **Derived: do not use UserScript; mods are the hook.** (Q2 closed as "unavailable",
+   not "unknown".)
+2. **A mod can wrap the per-frame update.** Overriding `GameplayMain.lua` (full-file
+   mirror, appended `MainUpdate` wrapper that calls the original) logs
+   `Loading Mod Script: mods\coopprobe\Scripts\Gameplay\GameplayMain.lua`, and the
+   wrapper ran every frame until the process was killed. (Q7 partly answered: the frame
+   hook exists and costs one Lua call per frame.)
+3. **Player state is readable.** Inside `MainUpdate`, `gGame:GetPlayer().Position`
+   returns an `EGVector`; logged `-470.79, 2159.24, -12005.78`. The value is byte-identical
+   across launches (deterministic start position — useful for test oracles).
+4. **Q4 answered: yes.** `EGPlayer:New()` + `player.Engine:AddEntitySibling(puppet)` +
+   `puppet.Position = player.Position:Plus( EGVector( 2, 0, 0 ) )` every frame. Result:
+   puppet survived 2,400+ frames (~40 s) of live world, no crash, and read back exactly
+   the written position (`puppet = player + (2,0,0)`) at every 120-frame sample. Writing
+   `Position` each frame wins over the puppet's physics for as long as it is re-set.
+   Player did not move (no input), so "follows a moving player" is still untested.
+5. **Menu bypass = bot start hook.** `EGMenuMain` is opened from
+   `GameplayMain.lua:27-30` (`loadingMenu.OnLoadComplete`). Rewriting that callback in
+   the mod to `MenuSystem:Open( EGMenuHUD )` (plus the `SetStage(math.huge)` branch from
+   `EGMenuMain:Start()`) starts play with **no input injection**; the world then stays
+   live and `MainUpdate` keeps running. This is how the automated test starts a game.
+   What did *not* work: appending a wrapper to `EGMenuMain:Update` in a mod — the
+   already-created menu instance never called it (no log line). Mechanism unknown
+   (derived guess: instance method binding happens before mod load, or the engine calls
+   the base `EGMenu` path). **Derived: override the creator, not the live menu class.**
+6. **The game rewrites `Mods\LoadOrder.lua` itself** (via `EGSaveLuaDataFile`) into
+   `ModList = { [1] = "coopempty", [2] = "coopprobe" }` — bare names, no `Mods\` prefix —
+   and that form still loads both mods. Both forms work.
+
+Unknowns left by this pass:
+
+- **Does the puppet render?** Two screenshots were captured while it was alive
+  (`local\rodina-test\puppet_probe_25s.png`, `…_33s.png`), but this agent cannot view
+  images. Owner check needed. No Lua model field exists on `EGCharacterActor` (mesh is
+  engine-side), so this is plausible but **not verified**.
+- Puppet side effects: `EGPlayer:Update` runs `UpdateDepthofFieldBlur`, which calls
+  `System.SetTimeScale` and scene blur. Not measured; a real puppet should subclass
+  `EGPlayer` with `Update`/`UpdateDepthofFieldBlur` stubbed.
+- Q5 (enumerate nearby actors) and Q6 (write health/damage without re-running death
+  side effects) not probed yet.
+- Q8 (live debug console) not probed; `System.Log` + log file is the working channel.
+
+Probe state in `local\rodina-test\`: `steam_appid.txt`; `Mods\LoadOrder.lua` (rewritten
+by the game, two entries); `Mods\CoopEmpty\` (control);
+`Mods\CoopProbe\Scripts\Gameplay\GameplayMain.lua` (menu bypass + puppet drive probe);
+`Scripts\UserScript.lua` (inert test file); two screenshots. All gitignored.
+
 ## Next actions (proposed, all need owner consent per ground rule 1)
 
 1. Install git + gh (owner already approved) → fork, branch `game/rodina`, keep notes.
