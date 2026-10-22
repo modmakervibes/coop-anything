@@ -330,7 +330,11 @@ invalidate several intermediate conclusions, corrected below.
    puppet survived 2,400+ frames (~40 s) of live world, no crash, and read back exactly
    the written position (`puppet = player + (2,0,0)`) at every 120-frame sample. Writing
    `Position` each frame wins over the puppet's physics for as long as it is re-set.
-   Player did not move (no input), so "follows a moving player" is still untested.
+   **Follows a moving player: verified.** Teleporting the player +10 on X from Lua read
+   back at the new X, and the puppet read `player + 2` 40 frames later. **Rotation: open.**
+   `puppet.Engine:SetRotationVelocity( EGVector( 0, 1, 0 ) )` produced no measurable
+   change in `Engine:GetYawPitchRollToLevel()` (~1e-9 before and after, 150 frames), so a
+   direct orientation setter (or a per-frame rotation write) still has to be found.
 5. **Menu bypass = bot start hook.** `EGMenuMain` is opened from
    `GameplayMain.lua:27-30` (`loadingMenu.OnLoadComplete`). Rewriting that callback in
    the mod to `MenuSystem:Open( EGMenuHUD )` (plus the `SetStage(math.huge)` branch from

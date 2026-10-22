@@ -107,9 +107,11 @@ Questions the probe must answer, each with an observed yes/no and a log line as 
    `player.Engine:AddEntitySibling(puppet)`, then
    `puppet.Position = player.Position:Plus(EGVector(2,0,0))` every frame: 2,400+ frames
    (~40 s) live, no crash, exact readback, the per-frame write wins over physics.
-   Rotation not yet tested; **render visibility not yet verified** (screenshots captured,
-   need owner check). Permanent culling/AI control over longer play also `unknown`.
-   NOTES.md P8.
+   Rotation not yet working: `Engine:SetRotationVelocity` produced no measurable change in
+   `GetYawPitchRollToLevel`; a direct orientation setter is still to be found. **Render
+   visibility not yet verified** (screenshots captured, need owner check). The puppet
+   follows a moving player: teleporting the player from Lua carried the puppet exactly.
+   Permanent culling/AI control over longer play also `unknown`. NOTES.md P8.
 5. **Can Lua enumerate nearby actors** — Xeno, ships — with enough state to mirror them
    (id, position, health, alive/dead)? **Yes (2026-10-22).**
    `System.GetCurrentScene():GetActors()` returns an array; each entry exposes
