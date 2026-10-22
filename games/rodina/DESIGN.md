@@ -103,19 +103,43 @@ Questions the probe must answer, each with an observed yes/no and a log line as 
    Rotation/velocity/scene/interior accessors still `unknown`. NOTES.md P8.
 4. **Can Lua create a second player-like actor** (the puppet), set its position and
    rotation every frame, and keep the engine from culling or AI-controlling it?
-   **Yes, position: verified 2026-10-22.** `EGPlayer:New()` +
-   `player.Engine:AddEntitySibling(puppet)`, then
-   `puppet.Position = player.Position:Plus(EGVector(2,0,0))` every frame: 2,400+ frames
-   (~40 s) live, no crash, exact readback, the per-frame write wins over physics.
-   Rotation not yet working: `Engine:SetRotationVelocity` produced no measurable change in
-   `GetYawPitchRollToLevel`; a direct orientation setter is still to be found. **Render:
-   no for a bare `EGPlayer`; yes for native character classes** (owner-confirmed
-   2026-10-22). The puppet was never visible in six live screenshots, while
-   `EGRobotCharacter`/`EGXenoCharacter` spawned with the game's own recipes were visible.
-   So the remote avatar must be an engine character class (or a clone), not a bare
-   `EGPlayer` — the logical actor has no body. The puppet follows a moving player:
-   teleporting the player from Lua carried the puppet exactly. Permanent culling/AI
-   control over longer play also `unknown`. NOTES.md P8.4, P8.10.
+   **Yes — spawn, drive and rotate, owner-confirmed 2026-10-22.** The working carrier is
+   a **subclass of the native xeno**, not a bare `EGPlayer`:
+
+   ```lua
+   EGMakeClass( "EGXenoAvatar", "EGXenoCharacter" )
+   function EGXenoAvatar:Update( aDeltaTime, aFullUpdate ) end
+   function EGXenoAvatar:UpdateDead( aDeltaTime ) end
+
+   local avatar = EGXenoAvatar:New()
+   avatar.Position = <spawn>
+   player.Engine:AddEntitySibling( avatar )
+   avatar.Engine:SetPhysicsType( EGActor.PHYSICS_DISABLED )
+   avatar.Health = 1000                      -- after AddEntitySibling
+   -- every frame:
+   avatar.Position = player.Position:Plus( EGVector( 0, 0, 5 ) )
+   avatar.Engine:EditorSetRotation( EGVector( yaw, 0, 0 ) )
+   ```
+
+   Owner watched it face four directions as the heading went 0/90/180/270°
+   (`local\rodina-test\shots\avatar10_montage.png`). Derived rules:
+   - **Rotation:** `.Orientation` is inert (readback follows, transform does not).
+     `Engine:EditorSetRotation(yaw,pitch,roll)` is the working absolute setter, ~1 frame
+     of sync lag. `SetRotationVelocity` is not usable for a driven puppet.
+   - **AI/physics:** the base `EGCharacterActor:Update` forces `PHYSICS_DRIVEN` every
+     frame and its physics overrides the heading after a few seconds. Stub `Update` in a
+     subclass and set `PHYSICS_DISABLED`; then the per-frame position write wins.
+   - **Render:** no for a bare `EGPlayer`; yes for native character classes. Base robot
+     and base xeno both render (owner-confirmed, `npc2_montage.png`); the **xeno**
+     subclass renders, a **robot** subclass did not. The avatar is currently a xeno
+     placeholder, not the player's appearance.
+   - **Order matters:** add the entity to the scene first, then change health/AI. Changes
+     applied before `AddEntitySibling` are associated with the earlier invisible runs
+     (cause not isolated).
+   - The avatar follows a moving player: teleporting the player from Lua carried it
+     exactly. Permanent culling over longer play is still `unknown`. `+5Z` is a
+     proof-of-render offset, not a gameplay spawn; a camera-relative spawn is still to be
+     derived. NOTES.md P8.4, P8.10, P8.11.
 5. **Can Lua enumerate nearby actors** — Xeno, ships — with enough state to mirror them
    (id, position, health, alive/dead)? **Yes (2026-10-22).**
    `System.GetCurrentScene():GetActors()` returns an array; each entry exposes
@@ -149,9 +173,11 @@ reverted backup is made first.
 **Decision rule, written before the result so it cannot be rationalised afterwards:**
 
 - **Lua can create and drive a second actor** → proceed to Stage 2. This is the good
-  outcome and makes the whole thing tractable. **This is what happened** (item 4), with
-  one qualifier: the actor is invisible as a bare `EGPlayer`; a renderable remote avatar
-  must be a native character class or a clone of one (item 4, NOTES.md P8.10).
+  outcome and makes the whole thing tractable. **This is what happened** (item 4): a
+  native character subclass can be spawned, driven, rotated and rendered
+  (owner-confirmed 2026-10-22), so the go/no-go probe is **positive**. The avatar is a
+  xeno placeholder and its spawn offset/shape are still open, but nothing here blocks
+  netcode.
 - **Lua can read but not create** → proceed, but the puppet has to come from cloning an
   existing actor class. Narrower, still viable; document the trick.
 - **Lua can do neither** → **stop and report.** A native Lua-binding DLL
@@ -239,7 +265,7 @@ test, and a human playtest is not a test.
 | Stage | Exit test |
 |---|---|
 | 0. Recon | Notes written, prior art search negative, identity recorded. **Done.** |
-| 1. Hook point | **Probe (§4).** Mod code logs player position each frame from inside the game. |
+| 1. Hook point | **Probe (§4).** **Done, positive.** Mod code logs player position, spawns a native character avatar, drives and rotates it, owner-confirmed visible (`shots/avatar10_montage.png`). |
 | 2. Puppet | Client A's script walks in a circle; host sees a puppet doing the same within tolerance. |
 | 3. Authority | Both clients damage the same Xeno; same health and death on both; the drop appears once. |
 | 4. World/story | Host advances a quest, client reads the same stage; a third late joiner gets an identical store hash. |
@@ -265,9 +291,14 @@ but it does not remove the risk. Milestones in order of realistic deliverability
 - ~~What is the correct schema for `Mods\LoadOrder.lua`?~~ **Answered.** Array of mod
   directory path strings; mods must run as `Rodina_Steam.exe` (NOTES.md P4/P7). The
   "registration is not valid" gate was the standalone exe, not the file.
-- How much of the entity graph does Lua actually expose? (§4 decides the project)
-- Can the engine be made to run two "player" entities, or does the player object assume
-  singularity the way Bethesda's hero does?
+- ~~How much of the entity graph does Lua actually expose?~~ **Enough for Stage 1.**
+  Player position, actor enumeration, health/damage/death, spawning a native character
+  subclass, per-frame position and rotation are all working (NOTES.md P8.4–P8.11).
+  Scene/interior accessors and animation state remain `unknown`.
+- ~~Can the engine be made to run two "player" entities?~~ **Not as a bare `EGPlayer`**
+  (no body, never renders). **Yes as a native character subclass** — the remote avatar is
+  a subclassed xeno, owner-confirmed visible and rotating (NOTES.md P8.11). The player
+  object itself stays singular.
 - What exactly does `EGSL` (`.rsl`) do for interiors, and does it matter for world sync?
   (Engine-side handlers appear stripped in shipping builds.)
 - Do mods need identical copies on every machine? (STALKER's server checksums its addons;

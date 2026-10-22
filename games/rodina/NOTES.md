@@ -409,20 +409,71 @@ invalidate several intermediate conclusions, corrected below.
     see it in any of six live screenshots taken while orbiting the spawn point
     (`local\rodina-test\shots\shot_08..12`). A follow-up run then spawned
     `EGRobotCharacter` and `EGXenoCharacter` with the game's own recipes
-    (`Scripts\Gameplay\EGGame.lua:686-734`) at the same place; the owner confirmed **at
-    least one is visible** (`local\rodina-test\shots\npc_6.png`, `npc_8.png`).
+    (`Scripts\Gameplay\EGGame.lua:686-734`); the owner confirmed **both** are visible
+    (`local\rodina-test\shots\npc_6.png`, `npc_8.png`). The same recipe was re-run verbatim
+    later and the owner again confirmed both (`shots\npc2_montage.png`).
     **Observation** (owner's eyes in the running game), not a pixel measurement.
     **Derived:** `EGPlayer:New()` makes a logical actor with no body; visibility comes from
     the native class's engine-side mesh, which Lua never touches. The remote avatar must be
     an engine-recognised character class (or a clone of one), not a bare `EGPlayer`.
-    **Unknown:** which of the two (robot or xeno) was visible and whether both were;
-    whether a native NPC can be given the player's appearance (mesh swap/attach); whether
-    its animation state can be driven from Lua.
+    **Unknown:** whether a native NPC can be given the player's appearance (mesh
+    swap/attach); whether its animation state can be driven from Lua.
+
+11. **Stage-1 positive: a native avatar can be spawned, driven and rotated, and it renders**
+    (2026-10-22, **owner-confirmed**: "visible and rotating",
+    `local\rodina-test\shots\avatar10_montage.png`). This is the recipe that works:
+
+    ```lua
+    EGMakeClass( "EGXenoAvatar", "EGXenoCharacter" )
+    function EGXenoAvatar:Update( aDeltaTime, aFullUpdate ) end   -- kills AI + physics forcing
+    function EGXenoAvatar:UpdateDead( aDeltaTime ) end
+
+    local avatar = EGXenoAvatar:New()
+    avatar.Position = <spawn position>
+    player.Engine:AddEntitySibling( avatar )
+    avatar.Engine:SetPhysicsType( EGActor.PHYSICS_DISABLED )
+    avatar.Health = 1000            -- after AddEntitySibling, not before
+
+    -- every frame:
+    avatar.Position = player.Position:Plus( EGVector( 0, 0, 5 ) )
+    avatar.Engine:EditorSetRotation( EGVector( yaw, 0, 0 ) )
+    ```
+
+    The owner saw the avatar facing four different directions as the logged heading
+    changed 0/90/180/270°. **Observation**, owner's eyes.
+
+    **Derived:**
+    - `.Orientation` is inert. Writing it changes the field (readback follows) but does
+      **not** change the entity transform. `Engine:EditorSetRotation( yaw, pitch, roll )`
+      is the working absolute rotation setter; it updates the transform with ~1 frame of
+      sync lag.
+    - Do **not** use `EGCharacterActor:Update` on a puppet: it forces `PHYSICS_DRIVEN`
+      every frame, and the actor's physics then overrides the heading we set (the base
+      xeno froze at one heading after ~5 s). Stub `Update` in a subclass instead.
+    - A **xeno** subclass renders. A **robot** subclass did not (`avatar5`), although the
+      base robot renders (`npc2`, `bisect`); robot subclassing appears to break its body
+      construction. Use the xeno as the avatar carrier.
+    - `Health = 1000`, the AI stub and `ScreenshotMode` do not hide a base xeno by
+      themselves (`shots\bisect_montage.png`, owner: both visible in all five panels).
+    - Changes applied **before** `AddEntitySibling` are associated with the earlier
+      "none visible" runs (`avatar6`); the working recipe adds the entity first, then
+      modifies it. Cause not isolated.
+
+    **Unknown / next:**
+    - Why the base xeno at +5X with pre-add changes was invisible while the base robot at
+      +5X and the subclass xeno at +5Z were visible. The contradiction is not fully
+      explained; the working recipe avoids it.
+    - The avatar is a **xeno placeholder**, not the player's appearance. The player is
+      first-person (has a "Player Camera" child, no third-person body observed); whether a
+      suit/human mesh can be substituted is open.
+    - `+5Z` is a proof-of-render offset, not a gameplay spawn. A camera-relative offset
+      (in front of the remote player) still needs to be derived.
+    - No movement animation is driven; only the root position/rotation.
 
 Unknowns left by this pass:
 
-- ~~Does the puppet render?~~ **Answered: no for a bare `EGPlayer`, yes for native
-  character classes** — see item 10.
+- ~~Does the puppet render?~~ **Answered: no for a bare `EGPlayer`, yes for a native
+  class. A subclassed xeno is visible, drivable and rotatable** — see items 10 and 11.
 - Puppet side effects: `EGPlayer:Update` runs `UpdateDepthofFieldBlur`, which calls
   `System.SetTimeScale` and scene blur. Not measured; a real puppet should subclass
   `EGPlayer` with `Update`/`UpdateDepthofFieldBlur` stubbed.
