@@ -92,22 +92,46 @@ Questions the probe must answer, each with an observed yes/no and a log line as 
    **after** the base scripts (`Loading Mod Script:` log line). Marker executed:
    `Loading Mod Script: mods\coopprobe\Scripts\Gameplay\EGMenuRegister.lua` →
    `[CoopProbe] mod file executed`. Full evidence: NOTES.md P4/P7.
-2. **What is the user-script hook really called?** The exe references
-   `EG_DIR_SCRIPTS + "\UserScript.lua"`; the file does not exist in this install. The
-   1.2.4 notes call it `UserScript.lua`. Determine whether the name is case- or
-   path-sensitive, whether it must be created, and whether a flag is needed.
-3. **Can Lua read the local player's state?** Position, rotation, world id / scene,
-   current interior, velocity. `EGPlayer.lua` / `EGActor.lua` / `EGScene.lua` should
-   show the accessors.
+2. **What is the user-script hook really called?** ~~Open~~ **Answered 2026-10-22: it
+   does not run.** `Scripts\UserScript.lua` was created with a `System.Log` line and a
+   global; neither fired at startup nor at `Start Game` (two runs). Filename case is
+   irrelevant on Windows, so the hook is inactive in this build, not misnamed.
+   **Derived: mods are the hook; do not rely on UserScript.** NOTES.md P8.
+3. **Can Lua read the local player's state?** **Position: yes** (2026-10-22). From a
+   `MainUpdate` wrapper, `gGame:GetPlayer().Position` returns an `EGVector`, logged
+   `-470.79, 2159.24, -12005.78`, byte-identical across launches (deterministic spawn).
+   Rotation/velocity/scene/interior accessors still `unknown`. NOTES.md P8.
 4. **Can Lua create a second player-like actor** (the puppet), set its position and
    rotation every frame, and keep the engine from culling or AI-controlling it?
-   This is the make-or-break question and the one flagged in the playbook as usually
-   taking the longest.
+   **Yes, position: verified 2026-10-22.** `EGPlayer:New()` +
+   `player.Engine:AddEntitySibling(puppet)`, then
+   `puppet.Position = player.Position:Plus(EGVector(2,0,0))` every frame: 2,400+ frames
+   (~40 s) live, no crash, exact readback, the per-frame write wins over physics.
+   Rotation not yet tested; **render visibility not yet verified** (screenshots captured,
+   need owner check). Permanent culling/AI control over longer play also `unknown`.
+   NOTES.md P8.
 5. **Can Lua enumerate nearby actors** — Xeno, ships — with enough state to mirror them
-   (id, position, health, alive/dead)?
+   (id, position, health, alive/dead)? **Yes (2026-10-22).**
+   `System.GetCurrentScene():GetActors()` returns an array; each entry exposes
+   `Engine:GetID()` (stable integer at spawn), `ClassName`, `Health`/`MaxHealth`,
+   `IsDead()` and `Position`. 17 scene actors at spawn (2 players/ships + 15
+   `EGShipVanguardChunk`s), 18 with the probe puppet. Caveat: chunk positions read as
+   garbage (≈1e9) and chunk health is `1.#INF`; the puppet's own id changes between runs
+   (2232 vs 2239), so the host must assign ids rather than trust spawn ids. NOTES.md P8.7.
 6. **Can Lua write** health/damage/death without re-running death side effects?
-7. **What does `GameplayMain.lua` do per frame?** Find the update hook we can piggyback
-   on and measure its cost, so we know the frame budget for sync.
+   **Yes for writing; death side effects not re-run in Lua (2026-10-22).** Direct
+   `.Health = 50` reads back 50; `DamageHealth(10)` → 40; `.Health = 0` → `IsDead()` true,
+   puppet still present 1,000+ frames later. `EGCharacterActor:UpdateDead` (loot +
+   particles + despawn) has **no Lua caller**, so a state write does not duplicate loot.
+   Whether the native engine invokes it for non-player actors is `unknown`; if so, clear
+   `LootType` / stub `UpdateDead` on mirrors. NOTES.md P8.8.
+7. **What does `GameplayMain.lua` do per frame?** **Hook found and used (2026-10-22).**
+   `MainUpdate(aDeltaTime)` is the per-frame entry point; a mod can override
+   `GameplayMain.lua` and wrap it without touching anything else. Cost per frame
+   `unknown` (untimed), but a 100-line logger ran at full speed with no visible stutter.
+   NOTE: `MainUpdate` stops while the pause menu is open; the engine opens `EGMenuPause`
+   when the window loses foreground. The menu bypass removes the main menu, and
+   unattended runs must force window focus (NOTES.md P8.9) or they will look "frozen".
 8. **Is there a debug console?** F9/F10/F11 ImGui pages and `System.EnableDebugText` are
    referenced in scripts; a console is the fastest way to poke at the API live.
 

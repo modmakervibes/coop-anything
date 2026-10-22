@@ -306,7 +306,10 @@ The owner's real install was never written to.
 ### P8. Stage-1 probe, second pass (2026-10-22): hook, UserScript, player state, puppet
 
 All observed in `local\rodina-test\` with the P4 launch recipe; each run is one
-`Rodina_Steam.exe` start, killed after the stated time.
+`Rodina_Steam.exe` start. **Runs are closed gracefully** (`CloseMainWindow`, i.e. WM_CLOSE,
+then wait for exit) before the log is read — see item 9. The game reports exit code 1 even
+on a clean close. Earlier probe runs in this pass were force-killed; that turned out to
+invalidate several intermediate conclusions, corrected below.
 
 1. **`Scripts\UserScript.lua` does not run** in 1.6.5 Steam. Two attempts: the file set a
    global and called `System.Log`. No log line at startup, and at `Start Game` the mod's
@@ -340,24 +343,84 @@ All observed in `local\rodina-test\` with the P4 launch recipe; each run is one
 6. **The game rewrites `Mods\LoadOrder.lua` itself** (via `EGSaveLuaDataFile`) into
    `ModList = { [1] = "coopempty", [2] = "coopprobe" }` — bare names, no `Mods\` prefix —
    and that form still loads both mods. Both forms work.
+7. **Q5 answered: actors are enumerable and carry stable ids at spawn.**
+   `System.GetCurrentScene():GetActors()` returns a plain array (17 entries at spawn,
+   18 once the probe's puppet exists). Each entry exposes `a.Engine:GetID()` (integer),
+   `a.ClassName`, `a.Health` / `a.MaxHealth`, `a:IsDead()` and `a.Position`. Full list
+   from one graceful-close run:
+
+   | # | id | class | health |
+   |---|---|---|---|
+   | 1 | 2172 | `EGShipPlayer` | 100 |
+   | 2 | 2175 | `EGPlayer` | 100 |
+   | 3–17 | 2177, 2181, 2184, 2186, 2189, 2192, 2195, 2197, 2200, 2203, 2206, 2209, 2212, 2214, 2217 | `EGShipVanguardChunk` | `1.#INF` |
+   | 18 | 2239 | `EGPlayer` (probe puppet) | 100 |
+
+   This is the mirroring substrate: id + class + transform + health per shared actor.
+   Caveats: the `EGShipVanguardChunk` entries report `Health = MaxHealth = 1.#INF` and
+   garbage positions (values around 1e9, likely unplaced or local-space chunks) — do not
+   mirror their transforms blindly. The puppet's own id is **not stable across runs**
+   (2232 in one run, 2239 in another) while the 17 scene actors kept their ids, so entity
+   ids must be assigned by the host, never assumed to match across machines.
+8. **Q6 answered: health is writable as state and does not re-run Lua death effects.**
+   Direct `puppet.Health = 50` read back 50; `puppet:DamageHealth(10, nil, nil, nil, true)`
+   then read 40; `puppet.Health = 0` made `IsDead()` true. The puppet stayed in the world
+   and in `GetActors()` 1,000+ frames later. `EGCharacterActor:Update` returns early when
+   `Health <= 0` (zeroes movement), but the loot/death path
+   `EGCharacterActor:UpdateDead` has **no Lua caller anywhere in the shipped scripts**
+   (grep: definition only). Derived: mirroring a death by writing `Health`/`IsDead` does
+   not re-run loot or particles on the client. Whether the native engine invokes
+   `UpdateDead` for non-player actors is **unknown** and must be tested on a real Xeno,
+   not on the puppet. If it does, the client mirror must clear `LootType` (or subclass
+   with `UpdateDead` stubbed) so loot is not spawned twice — the Gothic 3 lesson.
+9. **Harness facts (re-verified 2026-10-22).**
+   - **Never force-kill when the log is the evidence.** `Stop-Process` loses the unflushed
+     log tail; the file then ends mid-line and looks like a hang. With
+     `CloseMainWindow()` (WM_CLOSE) + wait for exit, the tail is present: one run that
+     looked "frozen at 12.5 s" actually logged a completed download at 12.597 s, HUD at
+     17.2 s, the enumeration at 23.6 s and checkpoints through f1800 at 35.3 s.
+   - Corollary: the earlier interim claims of a "download stall at 12.5 s", a "log-burst
+     deadlock" and a hard "~214-char line cap" were **artifacts of force-kill**, not game
+     behaviour. Whether one very long log line is safe is `unknown`; keep diagnostic
+     lines short (≲200 chars) as a precaution.
+   - The process stays `Responding=True` with steady CPU through those apparent freezes —
+     a second way to distinguish "not flushed" from "hung".
+   - **Focus loss pauses the game.** Losing the foreground opens `EGMenuPause` and stops
+     `MainUpdate` (observed at the moment the HUD opened). For unattended runs force the
+     foreground after launch: `AttachThreadInput(ourThread, foregroundThread, true)` →
+     `ShowWindow(SW_RESTORE)` → `BringWindowToTop` → `SetForegroundWindow` → detach.
+     Verified `fg=[Rodina]` and no pause for the rest of the run. Plain
+     `SetForegroundWindow` from the background agent process is refused by Windows.
+   - `GameplayMain.lua:34-35` starts real HTTP downloads at `Start Game`
+     (`Update/CurrentCredits.txt` on S3). Once connected they finish in well under a
+     second (DNS → connect → request → complete all at 12.597 s), so a co-op test need
+     not stub them; disabling them changes later timing and is not recommended for
+     parity with a normal launch.
+   - One short `System.Log` line per frame ran for hundreds of frames without issue;
+     sparse logging (every 20–120 frames) remains the safest for long runs.
 
 Unknowns left by this pass:
 
 - **Does the puppet render?** Two screenshots were captured while it was alive
   (`local\rodina-test\puppet_probe_25s.png`, `…_33s.png`), but this agent cannot view
   images. Owner check needed. No Lua model field exists on `EGCharacterActor` (mesh is
-  engine-side), so this is plausible but **not verified**.
+  engine-side), so it is plausible but **not verified**.
 - Puppet side effects: `EGPlayer:Update` runs `UpdateDepthofFieldBlur`, which calls
   `System.SetTimeScale` and scene blur. Not measured; a real puppet should subclass
   `EGPlayer` with `Update`/`UpdateDepthofFieldBlur` stubbed.
-- Q5 (enumerate nearby actors) and Q6 (write health/damage without re-running death
-  side effects) not probed yet.
+- Does the native engine react to `Health <= 0` on a non-player actor (death animation,
+  despawn, or a native call to `UpdateDead`)? The `EGPlayer` puppet did not despawn; no
+  Xeno was present in the starting scene to test.
+- What are the 15 `EGShipVanguardChunk` actors, and why do their positions read as
+  garbage? Possibly unplaced chunks; not mirrored yet.
 - Q8 (live debug console) not probed; `System.Log` + log file is the working channel.
 
 Probe state in `local\rodina-test\`: `steam_appid.txt`; `Mods\LoadOrder.lua` (rewritten
 by the game, two entries); `Mods\CoopEmpty\` (control);
-`Mods\CoopProbe\Scripts\Gameplay\GameplayMain.lua` (menu bypass + puppet drive probe);
-`Scripts\UserScript.lua` (inert test file); two screenshots. All gitignored.
+`Mods\CoopProbe\Scripts\Gameplay\GameplayMain.lua` (menu bypass + puppet drive + full
+actor-id enumeration, last run); `Scripts\UserScript.lua` (inert test file); two
+screenshots. Probe snippets kept beside the install as `_probe_*.lua`, logs as
+`RodinaLog*.txt`. All gitignored.
 
 ## Next actions (proposed, all need owner consent per ground rule 1)
 
